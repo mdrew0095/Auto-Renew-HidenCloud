@@ -3,7 +3,6 @@ name: Auto Renew HidenCloud
 on:
   workflow_dispatch:
   schedule:
-  schedule:
     # 每天自动尝试续期 (UTC 02:37 ≈ 北京 10:37, GitHub 可能再延迟)
     # 未到窗口时脚本自动跳过 (NOT_TIME): 到期前 1 天至过期暂停后 5 天内任意一天运行均可续上,
     # 因此不再需要按到期日手动对准星期几 (修复原周日 cron 与周四到期日错位导致的漏签)
