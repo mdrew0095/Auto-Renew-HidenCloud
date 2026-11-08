@@ -69,6 +69,18 @@ def _skip_heartbeat_sent_today():
         return False
 
 
+def _last_run_age_hours():
+    """距上次运行的小时数 (time.txt 为北京时间)。读取失败返回 0, 不影响主流程。"""
+    try:
+        import datetime as _dt
+        with open("time.txt", "r", encoding="utf-8") as f:
+            last = _dt.datetime.strptime(f.read().strip(), "%Y-%m-%d %H:%M:%S")
+        now_bj = _dt.datetime.utcnow() + _dt.timedelta(hours=8)
+        return (now_bj - last).total_seconds() / 3600.0
+    except Exception:
+        return 0.0
+
+
 def send_telegram_notification(status, old_due, new_due, current_ip="未知"):
     """发送 Telegram 通知"""
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
@@ -599,6 +611,37 @@ def renew_service(page):
         if not modal_opened:
             log("❌ 错误：尝试多次后，续费弹窗仍未出现。")
             page.screenshot(path="renew_modal_failed.png")
+            # 暂停(Suspended)状态的服务续期弹窗可能不弹出: 识别现场并尝试备用入口
+            try:
+                body_text = page.locator("body").inner_text()
+            except Exception:
+                body_text = ""
+            if "suspend" in body_text.lower():
+                log("🚨 检测到服务处于 Suspended 状态, 尝试备用续期入口...")
+                page.screenshot(path="suspended_manage_page.png")
+                create_probe = page.locator('button:has-text("Create Invoice")')
+                for sel in ['a:has-text("Renew")', 'button:has-text("Reactivate")',
+                            'a:has-text("Reactivate")', 'button:has-text("Restore")']:
+                    try:
+                        loc = page.locator(sel)
+                        if loc.count() > 0 and loc.first.is_visible():
+                            log(f"🖱️ 尝试备用入口: {sel}")
+                            loc.first.click()
+                            time.sleep(3)
+                            if create_probe.count() > 0 and create_probe.first.is_visible():
+                                modal_opened = True
+                                log("✅ 备用入口成功打开续期弹窗！")
+                                break
+                    except Exception as e:
+                        log(f"⚠️ 备用入口 {sel} 尝试失败: {e}")
+                if not modal_opened:
+                    try:
+                        btns = page.locator("button, a[role=button], a.btn").all_inner_texts()
+                        log("📄 页面可见按钮: " + " | ".join(t.strip() for t in btns[:20] if t.strip()))
+                        page.screenshot(path="suspended_no_modal.png")
+                    except Exception:
+                        pass
+                    return "SUSPENDED_FAIL"
             return False
 
         # 弹窗内先完成 Turnstile 人机验证，再提交
@@ -708,6 +751,15 @@ def main():
             if renew_result == "NOT_TIME":
                 log("⏳ 未到续期时间，目前无法续期")
                 status = "⏳ 未到续期时间"
+            elif renew_result == "SUSPENDED_FAIL":
+                log("🚨 服务已暂停且自动续期失败。")
+                try:
+                    import datetime as _dt
+                    due_dt = _dt.datetime.strptime(old_due.strip(), "%d %b %Y")
+                    grace_left = max(5 - (_dt.datetime.utcnow().date() - due_dt.date()).days, 0)
+                    status = f"🚨 服务已暂停且自动续期失败! 请尽快登录面板手动续期 (宽限约剩 {grace_left} 天, 逾期删除)"
+                except Exception:
+                    status = "🚨 服务已暂停且自动续期失败! 请尽快登录面板手动续期 (暂停后5天删除)"
             elif renew_result is False:
                 log("❌ 续费失败，脚本退出。")
                 status = "❌ 续期失败"
@@ -715,6 +767,11 @@ def main():
                 new_due = get_due_date(page)
                 log(f"📆 续费后到期时间：{new_due}")
                 status = "✅ 续期成功"
+
+            # 调度健康检查: 距上次运行过久说明 GitHub 调度曾丢任务, 在通知中标注
+            _stale_h = _last_run_age_hours()
+            if _stale_h >= 30:
+                status += chr(10) + f"⚠️ 距上次运行已 {_stale_h:.0f} 小时, 疑有调度被丢弃(本次已自动补上)"
 
             # 发送 Telegram 通知: 跳过类通知每天最多一条心跳, 成功/失败始终通知
             if renew_result == "NOT_TIME" and _skip_heartbeat_sent_today():
@@ -724,7 +781,7 @@ def main():
 
             if renew_result == "NOT_TIME":
                 sys.exit(0)
-            elif renew_result is False:
+            elif renew_result in (False, "SUSPENDED_FAIL"):
                 sys.exit(1)
             else:
                 sys.exit(0)
