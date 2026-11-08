@@ -1,0 +1,37 @@
+name: Renew Watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3,11,19 * * *' # 北京 11:17/19:17/03:17, 与续期触发点错开互备
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: 检查续期任务是否超过30小时未运行
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          set -e
+          last_ts=$(gh api "repos/${{ github.repository }}/commits?path=time.txt&per_page=1" --jq '.[0].commit.committer.date')
+          last_epoch=$(date -d "$last_ts" +%s)
+          now_epoch=$(date +%s)
+          age_h=$(( (now_epoch - last_epoch) / 3600 ))
+          echo "距上次续期任务运行: ${age_h} 小时"
+          if [ "$age_h" -lt 30 ]; then
+            echo "✅ 运行节奏正常, 无需处理"
+            exit 0
+          fi
+          echo "⚠️ 超过30小时未运行, 自动补触发续期..."
+          gh workflow run renew.yml --ref main
+          TEXT="🐕 看门狗: 续期任务已 ${age_h} 小时未运行 (GitHub 调度延迟/丢任务), 已自动补触发, 请留意后续 TG 通知"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" -d "chat_id=${TG_CHAT_ID}" --data-urlencode "text=${TEXT}" > /dev/null || true
+          echo "已补触发并发送 TG 提醒"
