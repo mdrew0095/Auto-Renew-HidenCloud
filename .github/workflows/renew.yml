@@ -56,7 +56,14 @@ jobs:
           COOKIE_VALUE: ${{ secrets.COOKIE_VALUE }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python -u app.py
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python -u app.py
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "首次运行失败 (exit $rc), 300 秒后自动重试一次..."
+            sleep 300
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python -u app.py
+          fi
 
       # 失败现场截图, 便于定位续期失败原因 (如暂停服务的弹窗差异)
       - name: 📸 上传失败截图
