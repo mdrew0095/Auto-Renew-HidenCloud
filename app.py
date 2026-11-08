@@ -58,6 +58,17 @@ def get_current_ip(proxy_server=None):
         log(f"❌ 获取出口IP失败: {e}")
         return "获取失败"
 
+def _skip_heartbeat_sent_today():
+    """time.txt 由每次运行结束后写入(北京时间)。若今天已发过"未到续期时间"心跳, 则不再重复打扰。
+    成功/失败通知不受此限制, 始终发送。"""
+    try:
+        with open("time.txt", "r", encoding="utf-8") as f:
+            beijing_today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 8 * 3600))
+            return beijing_today in f.read()
+    except OSError:
+        return False
+
+
 def send_telegram_notification(status, old_due, new_due, current_ip="未知"):
     """发送 Telegram 通知"""
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
@@ -705,8 +716,11 @@ def main():
                 log(f"📆 续费后到期时间：{new_due}")
                 status = "✅ 续期成功"
 
-            # 发送 Telegram 通知
-            send_telegram_notification(status, old_due, new_due, current_ip)
+            # 发送 Telegram 通知: 跳过类通知每天最多一条心跳, 成功/失败始终通知
+            if renew_result == "NOT_TIME" and _skip_heartbeat_sent_today():
+                log("🔇 今日心跳已发送过, 不重复发送跳过通知")
+            else:
+                send_telegram_notification(status, old_due, new_due, current_ip)
 
             if renew_result == "NOT_TIME":
                 sys.exit(0)
