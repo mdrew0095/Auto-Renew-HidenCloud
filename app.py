@@ -445,7 +445,7 @@ def login(page):
             if _is_logged_in(page):
                 log(f"✅ Cookie 登录成功！当前已到达dashboard页面")
                 return True
-            log("❌ Cookie 失效，请更换")
+            log("ℹ️ Cookie 未生效, 自动改用账号密码登录 (正常降级, 无需处理)")
         except Exception as e:
             log(f"⚠️ Cookie 登录尝试异常: {e}")
 
